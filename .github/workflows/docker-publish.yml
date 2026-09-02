@@ -1,0 +1,23 @@
+name: docker-publish
+
+# Publishes the moving "edge" development images on every push to main.
+# Versioned release images are published by the release-please workflow.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  edge:
+    uses: ./.github/workflows/docker-build.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      edge: true
