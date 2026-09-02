@@ -6,7 +6,8 @@
   "packages": {
     ".": {
       "release-type": "go",
-      "package-name": "rreading-glasses"
+      "package-name": "rreading-glasses",
+      "include-component-in-tag": false
     }
   },
   "changelog-sections": [
