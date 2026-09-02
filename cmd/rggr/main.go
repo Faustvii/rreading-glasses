@@ -36,6 +36,9 @@ type server struct {
 	CookieFile []byte `type:"filecontent" xor:"cookie" env:"COOKIE_FILE" help:"File with the Cookie to use for upstream HTTP requests."`
 	Proxy      string `default:"" env:"PROXY" help:"HTTP proxy URL to use for upstream requests."`
 	Upstream   string `required:"" env:"UPSTREAM" help:"Upstream host (e.g. www.example.com)."`
+
+	Token string `default:"" env:"GR_TOKEN" help:"Override the upstream GraphQL API token (X-Api-Key). Defaults to a built-in value."`
+	Host  string `default:"" env:"GR_HOST" help:"Override the upstream GraphQL host URL. Defaults to a built-in value."`
 }
 
 func (s *server) Run() error {
@@ -76,7 +79,7 @@ func (s *server) Run() error {
 	// interaction between these requests and the upstream HEAD requests
 	// elsewhere. Especially if those result in a 404. That seems to trigger
 	// the WAF, which blocks everything for a period of time.
-	gql, err := internal.NewGRGQL(ctx, time.Second/2.0, 10, reg)
+	gql, err := internal.NewGRGQL(ctx, s.Token, s.Host, time.Second/2.0, 10, reg)
 	if err != nil {
 		return err
 	}
