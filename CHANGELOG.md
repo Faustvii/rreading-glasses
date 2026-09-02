@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/Faustvii/rreading-glasses/compare/v1.0.0...v1.0.1) (2026-09-02)
+
+
+### Miscellaneous Chores
+
+* **ci:** fix version tag for release-please ([a8bc3a8](https://github.com/Faustvii/rreading-glasses/commit/a8bc3a8139703aa2d377fb34d5a51b5c06661118))
+
 ## 1.0.0 (2026-09-02)
 
 
