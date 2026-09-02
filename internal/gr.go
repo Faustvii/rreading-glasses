@@ -48,29 +48,36 @@ func NewGRGetter(cache cache[[]byte], gql graphql.Client, upstream *http.Client)
 	}, nil
 }
 
-// NewGRGQL returns a new GraphQL client for use with GR. The provided
-// [http.Client] must be non-nil and is used for issuing requests. If a
-// non-empty cookie is given the requests are authorized and use are allowed
-// more RPS.
-func NewGRGQL(_ context.Context, rate time.Duration, batchSize int, reg *prometheus.Registry) (graphql.Client, error) {
+// NewGRGQL returns a new GraphQL client for use with GR. The provided token
+// and host override the obscured defaults when non-empty; these credentials
+// occasionally change upstream, so they can be supplied via configuration
+// (e.g. GR_TOKEN/GR_HOST) without requiring a new release.
+func NewGRGQL(_ context.Context, token, host string, rate time.Duration, batchSize int, reg *prometheus.Registry) (graphql.Client, error) {
 	// These credentials are public and easily obtainable. They are obscured here only to hide them from search results.
-	defaultToken, err := hex.DecodeString("6461322d643266797579627773626633706f797175766270326d62697775")
-	if err != nil {
-		return nil, err
+	if token == "" {
+		defaultToken, err := hex.DecodeString("6461322d643266797579627773626633706f797175766270326d62697775")
+		if err != nil {
+			return nil, err
+		}
+		token = string(defaultToken)
 	}
-	host, err := hex.DecodeString("68747470733a2f2f6b7862776d716f76366a676733646161616d62373434796375342e61707073796e632d6170692e75732d656173742d312e616d617a6f6e6177732e636f6d2f6772617068716c")
-	if err != nil {
-		return nil, err
+
+	if host == "" {
+		defaultHost, err := hex.DecodeString("68747470733a2f2f6b7862776d716f76366a676733646161616d62373434796375342e61707073796e632d6170692e75732d656173742d312e616d617a6f6e6177732e636f6d2f6772617068716c")
+		if err != nil {
+			return nil, err
+		}
+		host = string(defaultHost)
 	}
 
 	auth := &HeaderTransport{
 		Key:   "X-Api-Key",
-		Value: string(defaultToken),
+		Value: token,
 		RoundTripper: errorProxyTransport{
 			RoundTripper: http.DefaultTransport,
 		},
 	}
-	return NewBatchedGraphQLClient(string(host), &http.Client{Transport: auth}, rate, batchSize, reg)
+	return NewBatchedGraphQLClient(host, &http.Client{Transport: auth}, rate, batchSize, reg)
 }
 
 // Search hits the auto_complete API that has been used historically, so it
