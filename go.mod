@@ -17,7 +17,7 @@ require (
 	github.com/bytedance/sonic v1.15.5
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/log v0.4.2
-	github.com/dgraph-io/ristretto/v2 v2.4.0
+	github.com/dgraph-io/ristretto/v2 v2.4.2
 	github.com/go-chi/chi/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/graphql-go/graphql v0.8.2-0.20260623012937-6acef3563ff7
