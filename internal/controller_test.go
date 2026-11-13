@@ -15,6 +15,28 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+func TestRecommendationsWaitsForResolvableWorks(t *testing.T) {
+	ctx := t.Context()
+	getter := NewMockgetter(gomock.NewController(t))
+	cache := newMemoryCache()
+	ctrl, err := NewController(cache, getter, nil, nil)
+	require.NoError(t, err)
+
+	ids := make([]int64, 128)
+	for i := range ids {
+		ids[i] = int64(i + 1)
+		cache.Set(ctx, WorkKey(ids[i]), []byte(`{}`), time.Hour)
+	}
+	cache.Set(ctx, WorkKey(999), _missing, time.Hour)
+	getter.EXPECT().Recommendations(gomock.Any(), int64(1)).Return(
+		RecommentationsResource{WorkIDs: append(append([]int64{}, ids...), 999)}, nil,
+	)
+
+	got, err := ctrl.Recommendations(ctx, 1)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, ids, got.WorkIDs)
+}
+
 func TestIncrementalDenormalization(t *testing.T) {
 	// Looking up foreign editions should update relevant works to include
 	// those editions, and authors should be updated to reflect the new works.
