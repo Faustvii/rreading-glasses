@@ -576,7 +576,7 @@ func TestBatchError(t *testing.T) {
 		return
 	}
 
-	gql, err := NewGRGQL(t.Context(), time.Second, 2, nil)
+	gql, err := NewGRGQL(t.Context(), "", "", time.Second, 2, nil)
 	require.NoError(t, err)
 
 	var err1, err2 error
@@ -617,7 +617,7 @@ func TestGRIntegration(t *testing.T) {
 	upstream, err := NewUpstream(host, "")
 	require.NoError(t, err)
 
-	gql, err := NewGRGQL(t.Context(), time.Second, 6, nil)
+	gql, err := NewGRGQL(t.Context(), "", "", time.Second, 6, nil)
 	require.NoError(t, err)
 
 	getter, err := NewGRGetter(cache, gql, upstream)
