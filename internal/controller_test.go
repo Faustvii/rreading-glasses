@@ -5,6 +5,7 @@ package internal
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"iter"
 	"os"
 	"testing"
@@ -131,52 +132,44 @@ func TestIncrementalDenormalization(t *testing.T) {
 	_, _, err = ctrl.GetBook(ctx, frenchEdition.ForeignID)
 	require.NoError(t, err)
 
-	waitForDenorm(ctrl)
+	// Observe the cached result directly: reading through the controller can
+	// enqueue more work, and queue metrics are not completion signals.
+	requireCachedEditions := func(stage string) {
+		t.Helper()
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			workBytes, workFound := cache.Get(ctx, WorkKey(work.ForeignID))
+			authorBytes, authorFound := cache.Get(ctx, AuthorKey(authorID))
+			diagnostics := fmt.Sprintf("%s: work=%s author=%s refreshWaiting=%g denormWaiting=%g",
+				stage, workBytes, authorBytes, ctrl.metrics.refreshWaitingGet(), ctrl.metrics.denormWaitingGet())
+			require.True(collect, workFound, diagnostics)
+			require.True(collect, authorFound, diagnostics)
 
-	workBytes, _, err := ctrl.GetWork(ctx, work.ForeignID)
+			var gotWork workResource
+			var gotAuthor AuthorResource
+			require.NoError(collect, json.Unmarshal(workBytes, &gotWork), diagnostics)
+			require.NoError(collect, json.Unmarshal(authorBytes, &gotAuthor), diagnostics)
+
+			expectedBooks := []bookResource{englishEdition, frenchEdition}
+			assert.Equal(collect, expectedBooks, gotWork.Books, diagnostics)
+			require.Len(collect, gotAuthor.Works, 1, diagnostics)
+			assert.Equal(collect, work.ForeignID, gotAuthor.Works[0].ForeignID, diagnostics)
+			assert.Equal(collect, expectedBooks, gotAuthor.Works[0].Books, diagnostics)
+		}, 5*time.Second, 10*time.Millisecond, "%s: cached editions did not converge", stage)
+	}
+
+	requireCachedEditions("foreign edition lookup")
+
+	// Re-fetching an edition must preserve both editions without duplicates.
+	require.NoError(t, cache.Expire(ctx, BookKey(frenchEdition.ForeignID)))
+	_, _, err = ctrl.GetBook(ctx, frenchEdition.ForeignID)
 	require.NoError(t, err)
-	var w workResource
-	require.NoError(t, json.Unmarshal(workBytes, &w))
-	assert.Len(t, w.Books, 2)
+	requireCachedEditions("edition cache miss")
 
-	waitForDenorm(ctrl)
-
-	// The work should have also been updated on the author.
-	authorBytes, _, err = ctrl.GetAuthor(ctx, author.ForeignID)
+	// Rebuilding the author must retain the discovered foreign edition.
+	require.NoError(t, cache.Expire(ctx, AuthorKey(authorID)))
+	_, _, err = ctrl.GetAuthor(ctx, authorID)
 	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(authorBytes, &author))
-	assert.Len(t, author.Works, 1)
-	require.Len(t, author.Works[0].Books, 2)
-	assert.Equal(t, englishEdition.ForeignID, author.Works[0].Books[0].ForeignID)
-	assert.Equal(t, frenchEdition.ForeignID, author.Works[0].Books[1].ForeignID)
-
-	// Force a cache miss to re-trigger denormalization.
-	_ = ctrl.cache.Expire(ctx, BookKey(frenchEdition.ForeignID))
-	_, _, _ = ctrl.GetBook(ctx, frenchEdition.ForeignID)
-
-	_ = ctrl.refreshG.Wait()
-	time.Sleep(100 * time.Millisecond) // Wait for the denormalization goroutine update things.
-
-	workBytes, _, err = ctrl.GetWork(ctx, work.ForeignID)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(workBytes, &w))
-	assert.Len(t, w.Books, 2)
-
-	authorBytes, _, err = ctrl.GetAuthor(ctx, author.ForeignID)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(authorBytes, &author))
-	assert.Len(t, author.Works[0].Books, 2)
-
-	// Force an author cache miss to re-trigger denormalization.
-	_ = ctrl.cache.Expire(ctx, AuthorKey(author.ForeignID))
-	_, _, _ = ctrl.GetAuthor(ctx, author.ForeignID)
-
-	waitForDenorm(ctrl)
-
-	authorBytes, _, err = ctrl.GetAuthor(ctx, author.ForeignID)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(authorBytes, &author))
-	assert.Len(t, author.Works[0].Books, 2)
+	requireCachedEditions("author cache miss")
 }
 
 func TestDenormalizeMissing(t *testing.T) {
