@@ -54,6 +54,8 @@ func TestPurgeExpired(t *testing.T) {
 	cache.Set(ctx, "purge-fresh", []byte{1}, time.Hour)
 	cache.Set(ctx, "purge-recent", []byte{2}, -time.Hour)
 	cache.Set(ctx, "purge-old", []byte{3}, -_purgeGracePeriod-time.Hour)
+	cache.Set(ctx, "purge-manually-expired", []byte{4}, time.Hour)
+	require.NoError(t, cache.Expire(ctx, "purge-manually-expired"))
 
 	_, err = cache.purgeExpired(ctx)
 	require.NoError(t, err)
@@ -63,6 +65,10 @@ func TestPurgeExpired(t *testing.T) {
 
 	_, ok = cache.Get(ctx, "purge-recent")
 	assert.True(t, ok, "recently expired rows should be kept")
+
+	_, ttl, ok := cache.GetWithTTL(ctx, "purge-manually-expired")
+	assert.True(t, ok, "manually expired rows should get the same grace period")
+	assert.Zero(t, ttl)
 
 	_, ok = cache.Get(ctx, "purge-old")
 	assert.False(t, ok, "long expired rows should be purged")
