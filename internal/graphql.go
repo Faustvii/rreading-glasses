@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"net/http"
 	"slices"
 	"strings"
@@ -21,7 +22,6 @@ import (
 	"github.com/graphql-go/graphql/language/source"
 	"github.com/graphql-go/graphql/language/visitor"
 	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/exp/rand"
 )
 
 // batchedgqlclient accumulates queries and executes them in batch in order to
@@ -300,7 +300,7 @@ var runes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 func randRunes(n int) string {
 	b := make([]rune, n)
 	for i := range b {
-		b[i] = runes[rand.Intn(len(runes))]
+		b[i] = runes[rand.IntN(len(runes))]
 	}
 	return string(b)
 }
