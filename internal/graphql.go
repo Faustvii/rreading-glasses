@@ -128,7 +128,7 @@ func (c *batchedgqlclient) flush(ctx context.Context) {
 		// silently drop every subscriber's result.
 		var err error
 		backoff := 2 * time.Second
-		for attempt := 0; attempt < 5; attempt++ {
+		for attempt := range 5 {
 			data = map[string]any{}
 			resp.Data = &data
 			resp.Errors = nil
