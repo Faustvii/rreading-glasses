@@ -14,20 +14,20 @@ require (
 	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/alecthomas/kong v1.11.0
 	github.com/blampe/isbn v0.0.0-20250824003930-4baf6973b7fc
-	github.com/bytedance/sonic v1.15.0
+	github.com/bytedance/sonic v1.15.5
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/log v0.4.2
 	github.com/dgraph-io/ristretto/v2 v2.4.0
 	github.com/go-chi/chi/v5 v5.2.2
 	github.com/google/uuid v1.6.0
-	github.com/graphql-go/graphql v0.8.2-0.20241012201702-a546af7e957c
+	github.com/graphql-go/graphql v0.8.2-0.20260623012937-6acef3563ff7
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/mattn/go-isatty v0.0.24
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/prometheus/client_golang v1.23.2
-	github.com/prometheus/client_model v0.6.2
+	github.com/prometheus/client_model v0.6.3
 	github.com/stretchr/testify v1.11.1
-	github.com/swaggest/swgui v1.8.5
+	github.com/swaggest/swgui v1.8.9
 	github.com/vektah/gqlparser/v2 v2.5.28
 	go.uber.org/mock v0.6.0
 	go.uber.org/zap v1.27.0
@@ -48,7 +48,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.6.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
-	github.com/bytedance/sonic/loader v0.5.0 // indirect
+	github.com/bytedance/sonic/loader v0.5.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
 	github.com/charmbracelet/x/ansi v0.8.0 // indirect
@@ -94,7 +94,7 @@ require (
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
-	google.golang.org/protobuf v1.36.8 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
