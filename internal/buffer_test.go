@@ -7,6 +7,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestEdgeBufferMetricsAfterFinalPop(t *testing.T) {
+	metrics := newControllerMetrics(nil)
+	buf := &edgebuf{onSizeChange: metrics.denormWaitingSet}
+	buf.push(edge{kind: workEdge, parentID: 100, childIDs: newSet(int64(1))})
+
+	// accumulate sends the edge before popping it. A fast consumer can
+	// sample the queue size before that final pop and leave a stale gauge.
+	_, ok := buf.peek()
+	assert.True(t, ok)
+	metrics.denormWaitingSet(buf.len())
+	assert.Equal(t, 1.0, metrics.denormWaitingGet())
+	buf.pop()
+	assert.Equal(t, 0, buf.len())
+	assert.Zero(t, metrics.denormWaitingGet(), "the final pop must clear the waiting gauge")
+}
+
 func TestAccumulateEdges(t *testing.T) {
 	buf := &edgebuf{}
 	assert.Equal(t, 0, buf.len())

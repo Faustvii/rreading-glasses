@@ -82,12 +82,15 @@ func (s *slicebuffer[T]) len() int {
 // edgebuf collects and merges denormalization steps while still maintaining
 // serializability.
 type edgebuf struct {
-	mu      sync.Mutex
-	cond    *sync.Cond
-	queue   []*edge
-	works   map[int64]*edge
-	authors map[int64]*edge
-	size    atomic.Int32
+	// Called under mu after each mutation so the gauge cannot retain a
+	// snapshot taken before accumulate removes the last delivered edge.
+	onSizeChange func(int)
+	mu           sync.Mutex
+	cond         *sync.Cond
+	queue        []*edge
+	works        map[int64]*edge
+	authors      map[int64]*edge
+	size         atomic.Int32
 }
 
 // push enqueues the edge. If an edge of the same kind was already
@@ -134,6 +137,9 @@ func (b *edgebuf) push(e edge) {
 		b.size.Add(int32(len(e.childIDs)))
 		b.queue = append(b.queue, &e)
 	}
+	if b.onSizeChange != nil {
+		b.onSizeChange(int(b.size.Load()))
+	}
 	b.cond.Signal()
 }
 
@@ -177,6 +183,9 @@ func (b *edgebuf) pop() edge {
 	}
 
 	b.size.Add(-int32(len(edge.childIDs)))
+	if b.onSizeChange != nil {
+		b.onSizeChange(int(b.size.Load()))
+	}
 
 	return *edge
 }

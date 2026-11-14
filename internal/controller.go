@@ -867,7 +867,7 @@ func (c *Controller) Run(ctx context.Context) {
 		}
 	}()
 
-	denormBuf := &edgebuf{}
+	denormBuf := &edgebuf{onSizeChange: c.metrics.denormWaitingSet}
 	denorms := accumulate(c.denormC, denormBuf)
 	for edge := range denorms {
 		ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
@@ -888,7 +888,6 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 		}
 		cancel()
-		c.metrics.denormWaitingSet(denormBuf.len())
 	}
 }
 
