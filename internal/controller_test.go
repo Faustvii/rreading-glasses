@@ -370,7 +370,10 @@ func TestSubtitles(t *testing.T) {
 		LinkItems: []seriesWorkLinkResource{},
 	}, nil)
 
-	getter.EXPECT().GetAuthorBooks(gomock.Any(), author.ForeignID).Return(iter.Seq2[int64, error](func(func(int64, error) bool) {}))
+	catalogueEnumerated := make(chan struct{})
+	getter.EXPECT().GetAuthorBooks(gomock.Any(), author.ForeignID).Return(iter.Seq2[int64, error](func(func(int64, error) bool) {
+		close(catalogueEnumerated)
+	}))
 
 	err = ctrl.denormalizeWorks(ctx, author.ForeignID, workDupe1.ForeignID, workDupe2.ForeignID, workUnique.ForeignID)
 	require.NoError(t, err)
@@ -385,6 +388,14 @@ func TestSubtitles(t *testing.T) {
 
 	authorBytes, _, err := ctrl.GetAuthor(ctx, author.ForeignID)
 	require.NoError(t, err)
+
+	// GetAuthor returns before its queued catalogue job runs. Keep the mock
+	// alive until that job enumerates, even under single-CPU CI scheduling.
+	select {
+	case <-catalogueEnumerated:
+	case <-time.After(5 * time.Second):
+		t.Fatal("author catalogue refresh did not enumerate")
+	}
 
 	require.NoError(t, json.Unmarshal(authorBytes, &author))
 
