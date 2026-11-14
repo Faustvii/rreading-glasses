@@ -546,17 +546,17 @@ func (g *GRGetter) GetSeries(ctx context.Context, seriesID int64) (*SeriesResour
 
 // GetAuthorBooks enumerates all of the "best" editions for an author. This is
 // how we load large authors.
-func (g *GRGetter) GetAuthorBooks(ctx context.Context, authorID int64) iter.Seq[int64] {
+func (g *GRGetter) GetAuthorBooks(ctx context.Context, authorID int64) iter.Seq2[int64, error] {
 	authorBytes, err := g.GetAuthor(ctx, authorID)
 	if err != nil {
 		Log(ctx).Warn("problem getting author for full load", "err", err)
-		return func(yield func(int64) bool) {} // Empty iterator.
+		return func(yield func(int64, error) bool) { yield(0, err) }
 	}
 
 	var author AuthorResource
 	_ = sonic.ConfigStd.Unmarshal(authorBytes, &author)
 
-	return func(yield func(int64) bool) {
+	return func(yield func(int64, error) bool) {
 		after := ""
 		for {
 			works, err := gr.GetAuthorWorks(ctx, g.gql, gr.GetWorksByContributorInput{
@@ -564,6 +564,7 @@ func (g *GRGetter) GetAuthorBooks(ctx context.Context, authorID int64) iter.Seq[
 			}, gr.PaginationInput{Limit: 20, After: after})
 			if err != nil {
 				Log(ctx).Warn("problem getting author works", "err", err, "author", authorID, "authorKCA", author.KCA, "after", after)
+				yield(0, err)
 				return
 			}
 
@@ -575,7 +576,7 @@ func (g *GRGetter) GetAuthorBooks(ctx context.Context, authorID int64) iter.Seq[
 				if w.Node.BestBook.PrimaryContributorEdge.Role != "Author" {
 					continue // Skip things they didn't author.
 				}
-				if !yield(w.Node.BestBook.LegacyId) {
+				if !yield(w.Node.BestBook.LegacyId, nil) {
 					return
 				}
 			}

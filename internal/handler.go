@@ -632,6 +632,11 @@ func (h *Handler) getAuthorChanged(w http.ResponseWriter, _ *http.Request) {
 // error wraps a statusErr.
 func (*Handler) error(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
+	var upstream *upstreamError
+	if errors.As(err, &upstream) && time.Until(upstream.RetryAt) > 0 {
+		seconds := max(1, int(time.Until(upstream.RetryAt).Seconds()+0.999))
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	}
 	var s statusErr
 	if errors.As(err, &s) {
 		status = s.Status()

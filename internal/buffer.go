@@ -54,14 +54,12 @@ func accumulate[T any](producer <-chan T, buf bbuffer[T]) <-chan T {
 // slicebuffer is a simple slice buffer. It is not thread safe.
 type slicebuffer[T any] []T
 
-//nolint:unused // Linter seems confused by generics.
 func (s *slicebuffer[T]) pop() T {
 	ss := (*s)[0]
 	*s = (*s)[1:]
 	return ss
 }
 
-//nolint:unused // Linter seems confused by generics.
 func (s *slicebuffer[T]) push(t T) {
 	if s == nil {
 		s = &slicebuffer[T]{}
@@ -69,7 +67,6 @@ func (s *slicebuffer[T]) push(t T) {
 	*s = append(*s, t)
 }
 
-//nolint:unused // Linter seems confused by generics.
 func (s *slicebuffer[T]) peek() (T, bool) {
 	if s == nil || len(*s) == 0 {
 		var t T
@@ -78,7 +75,6 @@ func (s *slicebuffer[T]) peek() (T, bool) {
 	return (*s)[0], true
 }
 
-//nolint:unused // Linter seems confused by generics.
 func (s *slicebuffer[T]) len() int {
 	return len(*s)
 }

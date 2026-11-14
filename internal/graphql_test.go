@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Khan/genqlient/graphql"
 
 	"github.com/blampe/rreading-glasses/gr"
 	"github.com/blampe/rreading-glasses/hardcover"
@@ -403,4 +406,40 @@ func TestGQLStatusCode(t *testing.T) {
 	err = &gqlerror.Error{Message: "Request failed with status code 403"}
 	err403 := statusErr(403)
 	assert.ErrorAs(t, gqlStatusErr(err), &err403)
+}
+
+func TestBatchCancelledCallerReturnsWithoutFlush(t *testing.T) {
+	client, err := NewBatchedGraphQLClient("https://example.invalid", &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("canceled request reached upstream")
+		return nil, context.Canceled
+	})}, time.Hour, 8, nil)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, client.MakeRequest(ctx, &graphql.Request{Query: `query { me { id } }`}, &graphql.Response{}), context.Canceled)
+	batch := client.(*batchedgqlclient)
+	batch.flush(t.Context())
+	require.Empty(t, batch.queue)
+	require.Zero(t, batch.metrics.batchesSentGet())
+}
+
+func TestBatchInteractivePriority(t *testing.T) {
+	client, err := NewBatchedGraphQLClient("https://example.invalid", &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"data":{}}`))}, nil
+	})}, time.Hour, 1, nil)
+	require.NoError(t, err)
+	batch := client.(*batchedgqlclient)
+	var raw1, raw2 json.RawMessage
+	background := context.WithValue(t.Context(), backgroundRequestKey{}, true)
+	first := batch.enqueue(background, &graphql.Request{Query: `query { first { id } }`}, &graphql.Response{Data: &raw1})
+	second := batch.enqueue(t.Context(), &graphql.Request{Query: `query { second { id } }`}, &graphql.Response{Data: &raw2})
+	batch.flush(t.Context())
+	require.NoError(t, <-second.respC)
+	select {
+	case err := <-first.respC:
+		t.Fatalf("background request ran ahead of interactive request: %v", err)
+	default:
+	}
+	batch.flush(t.Context())
+	require.NoError(t, <-first.respC)
 }

@@ -34,22 +34,34 @@ type batchedgqlclient struct {
 	every     time.Duration  // every controls how often requests are flushed.
 	metrics   *gqlMetrics    // metrics tracks batches and queries sent.
 
-	wrapped graphql.Client
+	inflight chan struct{}
+	wrapped  graphql.Client
 }
 
 // NewBatchedGraphQLClient creates a batching GraphQL client. Queries are
 // accumulated and executed regularly accurding to the given rate.
 func NewBatchedGraphQLClient(url string, client *http.Client, every time.Duration, batchSize int, reg *prometheus.Registry) (graphql.Client, error) {
-	wrapped := graphql.NewClient(url, client)
+	return newBatchedGraphQLClient(graphql.NewClient(url, client), every, batchSize, reg)
+}
+
+func newBatchedGraphQLClient(wrapped graphql.Client, every time.Duration, batchSize int, reg *prometheus.Registry) (graphql.Client, error) {
+	if batchSize < 1 || every <= 0 {
+		return nil, fmt.Errorf("batch size and interval must be positive")
+	}
 
 	c := &batchedgqlclient{
 		batchSize: batchSize,
+		inflight:  make(chan struct{}, 4),
 		wrapped:   wrapped,
 		queue:     []batchedQuery{},
 		metrics:   newGQLMetrics(reg),
 		every:     every,
 	}
 
+	if hc, ok := wrapped.(*hardcoverClient); ok {
+		hc.metrics = c.metrics
+		c.inflight = make(chan struct{}, 1)
+	}
 	go func() {
 		ctx := context.WithValue(context.Background(), middleware.RequestIDKey, fmt.Sprintf("batch-flush-%d", time.Now().Unix()))
 		for {
@@ -93,9 +105,50 @@ func (c *batchedgqlclient) flush(ctx context.Context) {
 		return // Nothing to do yet.
 	}
 
+	select {
+	case c.inflight <- struct{}{}:
+	default:
+		return
+	}
+	// Prefer batches containing an interactive caller.
+	for i, candidate := range c.queue {
+		interactive := false
+		for _, sub := range candidate.subscribers {
+			if sub.ctx.Value(backgroundRequestKey{}) == nil {
+				interactive = true
+				break
+			}
+		}
+		if interactive {
+			c.queue[0], c.queue[i] = c.queue[i], c.queue[0]
+			break
+		}
+	}
 	// Take our oldest batch off the queue.
 	batch := c.queue[0]
 	c.queue = c.queue[1:]
+	// Rebuild from active callers so canceled queries consume no upstream tokens.
+	active := batchedQuery{qb: newQueryBuilder(), subscribers: map[string]*subscription{}}
+	for _, sub := range batch.subscribers {
+		if sub.ctx.Err() != nil {
+			continue
+		}
+		var vars map[string]any
+		b, _ := json.Marshal(sub.req.Variables)
+		_ = json.Unmarshal(b, &vars)
+		id, field, err := active.qb.add(sub.req.Query, vars)
+		if err != nil {
+			sub.respC <- err
+			continue
+		}
+		sub.field = field
+		active.subscribers[id] = sub
+	}
+	batch = active
+	if len(batch.subscribers) == 0 {
+		<-c.inflight
+		return
+	}
 
 	c.metrics.batchesSentInc()
 	c.metrics.queriesSentAdd(int64(len(batch.subscribers)))
@@ -103,14 +156,22 @@ func (c *batchedgqlclient) flush(ctx context.Context) {
 	query, vars, err := batch.qb.build()
 	if err != nil {
 		Log(ctx).Error("unable to build query", "err", err)
+		for _, sub := range batch.subscribers {
+			sub.respC <- err
+		}
+		<-c.inflight
 		return
 	}
 
+	opName := ""
+	if batch.qb.op.Name != nil {
+		opName = batch.qb.op.Name.Value
+	}
 	data := map[string]any{}
 	req := &graphql.Request{
 		Query:     query,
 		Variables: vars,
-		OpName:    batch.qb.op.Name.Value,
+		OpName:    opName,
 	}
 	resp := &graphql.Response{
 		Data: &data,
@@ -119,8 +180,27 @@ func (c *batchedgqlclient) flush(ctx context.Context) {
 	// Issue the request in a separate goroutine so we can continue to
 	// accumulate queries without needing to wait for the network call.
 	go func(batch batchedQuery) {
+		defer func() { <-c.inflight }()
 		ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 		defer cancel()
+		var subscribersMu sync.Mutex
+		remaining := len(batch.subscribers)
+		var stops []func() bool
+		for _, sub := range batch.subscribers {
+			stops = append(stops, context.AfterFunc(sub.ctx, func() {
+				subscribersMu.Lock()
+				defer subscribersMu.Unlock()
+				remaining--
+				if remaining == 0 {
+					cancel()
+				}
+			}))
+		}
+		defer func() {
+			for _, stop := range stops {
+				stop()
+			}
+		}()
 
 		// Retry the whole batch on rate-limit (429) / transient (5xx)
 		// responses with exponential backoff, so a burst against a
@@ -136,19 +216,20 @@ func (c *batchedgqlclient) flush(ctx context.Context) {
 			if err == nil {
 				break
 			}
-			msg := err.Error()
-			retriable := strings.Contains(msg, "429") ||
-				strings.Contains(msg, "500") || strings.Contains(msg, "502") ||
-				strings.Contains(msg, "503") || strings.Contains(msg, "504")
-			if !retriable {
+			var httpErr *graphql.HTTPError
+			if !errors.As(err, &httpErr) || (httpErr.StatusCode != 429 && httpErr.StatusCode < 500) || attempt == 4 {
 				break
 			}
-			Log(ctx).Warn("batch upstream throttled, backing off", "attempt", attempt+1, "backoff", backoff.String(), "err", msg)
-			select {
-			case <-ctx.Done():
-				err = ctx.Err()
-			case <-time.After(backoff):
+			// Hardcover handles retries through its shared scheduler. Other
+			// upstreams retain bounded retries using genqlient's typed status.
+			if _, ok := c.wrapped.(*hardcoverClient); ok {
+				break
 			}
+			if waitErr := waitHardcover(ctx, backoff); waitErr != nil {
+				err = waitErr
+				break
+			}
+
 			backoff *= 2
 		}
 
@@ -157,11 +238,18 @@ func (c *batchedgqlclient) flush(ctx context.Context) {
 		// it's just the wrapped version of our response errors.
 		if resp != nil && len(resp.Errors) > 0 {
 			for _, e := range resp.Errors {
-				sub, ok := batch.subscribers[e.Path.String()]
+				if len(e.Path) == 0 {
+					for id, sub := range batch.subscribers {
+						sub.respC <- errors.Join(gqlStatusErr(e), statusErr(502))
+						delete(batch.subscribers, id)
+					}
+					break
+				}
+				sub, ok := batch.subscribers[fmt.Sprint(e.Path[0])]
 				if !ok {
 					continue
 				}
-				sub.respC <- gqlStatusErr(e)
+				sub.respC <- errors.Join(gqlStatusErr(e), statusErr(502))
 				// Remove our subscriber because we already responded.
 				delete(batch.subscribers, e.Path.String())
 			}
@@ -195,8 +283,18 @@ func (c *batchedgqlclient) MakeRequest(
 	req *graphql.Request,
 	resp *graphql.Response,
 ) error {
-	err := <-c.enqueue(ctx, req, resp).respC
-	return err
+	var raw json.RawMessage
+	result := &graphql.Response{Data: &raw}
+	sub := c.enqueue(ctx, req, result)
+	select {
+	case err := <-sub.respC:
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, resp.Data)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // enqueue adds a query to the batch and returns a subscription whose result
@@ -209,6 +307,12 @@ func (c *batchedgqlclient) enqueue(
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	respC := make(chan error, 1)
+	sub := &subscription{ctx: ctx, resp: resp, respC: respC, req: req}
+	if len(c.queue) >= 256 {
+		respC <- &upstreamError{Code: 503, RetryAt: time.Now().Add(time.Minute)}
+		return sub
+	}
 	// Take the youngest batch if it isn't full yet, otherwise start a new batch.
 	if len(c.queue) == 0 || len(c.queue[len(c.queue)-1].subscribers) >= c.batchSize {
 		c.queue = append(c.queue, batchedQuery{
@@ -218,14 +322,6 @@ func (c *batchedgqlclient) enqueue(
 	}
 	batch := c.queue[len(c.queue)-1]
 
-	respC := make(chan error, 1)
-
-	sub := &subscription{
-		ctx:   ctx,
-		resp:  resp,
-		respC: respC,
-	}
-
 	var vars map[string]any
 	out, _ := json.Marshal(req.Variables)
 	_ = sonic.ConfigStd.Unmarshal(out, &vars)
@@ -233,6 +329,7 @@ func (c *batchedgqlclient) enqueue(
 	id, field, err := batch.qb.add(req.Query, vars)
 	if err != nil {
 		respC <- err
+		return sub
 	}
 
 	batch.subscribers[id] = &subscription{
@@ -240,6 +337,7 @@ func (c *batchedgqlclient) enqueue(
 		resp:  resp,
 		respC: respC,
 		field: field,
+		req:   req,
 	}
 
 	return sub
@@ -247,7 +345,10 @@ func (c *batchedgqlclient) enqueue(
 
 // subscription holds information about a caller who is waiting for a query to
 // be resolved as part of a batch.
+type backgroundRequestKey struct{}
+
 type subscription struct {
+	req   *graphql.Request
 	ctx   context.Context
 	resp  *graphql.Response
 	respC chan error
@@ -261,6 +362,10 @@ type subscription struct {
 //
 // The error is returned unchanged if it doesn't include a status code.
 func gqlStatusErr(err error) error {
+	var httpErr *graphql.HTTPError
+	if errors.As(err, &httpErr) {
+		return errors.Join(err, statusErr(httpErr.StatusCode))
+	}
 	errStr := err.Error()
 	idx := strings.Index(errStr, "Request failed with status code")
 	if idx == -1 {
@@ -274,7 +379,7 @@ func gqlStatusErr(err error) error {
 // can all be executed as part of one request.
 type queryBuilder struct {
 	op        *ast.OperationDefinition
-	fragments map[string]struct{}
+	fragments map[string]string
 	vars      map[string]any
 }
 
@@ -283,14 +388,11 @@ type batchedQuery struct {
 	subscribers map[string]*subscription
 }
 
-// _fragments holds string representations of fragment nodes since they are static.
-var _fragments = map[string]string{}
-
 // newQueryBuilder initializes a new QueryBuilder with an empty Document.
 func newQueryBuilder() *queryBuilder {
 	return &queryBuilder{
 		vars:      make(map[string]any),
-		fragments: map[string]struct{}{},
+		fragments: map[string]string{},
 	}
 }
 
@@ -328,10 +430,7 @@ func (qb *queryBuilder) add(query string, vars map[string]any) (id string, field
 		if fragDef, ok := def.(*ast.FragmentDefinition); ok {
 			name := fragDef.Name.Value
 			if _, seen := qb.fragments[name]; !seen {
-				if _, cached := _fragments[name]; !cached {
-					_fragments[name] = printer.Print(fragDef).(string)
-				}
-				qb.fragments[name] = struct{}{}
+				qb.fragments[name] = printer.Print(fragDef).(string)
 			}
 		}
 
@@ -388,7 +487,7 @@ func (qb *queryBuilder) build() (string, map[string]any, error) {
 
 	for _, fragName := range slices.Sorted(maps.Keys(qb.fragments)) {
 		builder.WriteString("\n")
-		builder.WriteString(_fragments[fragName])
+		builder.WriteString(qb.fragments[fragName])
 	}
 
 	return builder.String(), qb.vars, nil
