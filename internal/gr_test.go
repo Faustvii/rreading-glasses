@@ -489,12 +489,16 @@ func TestGRGetBookDataIntegrity(t *testing.T) {
 
 		waitForDenorm(ctrl)
 
-		workBytes, ttl, err := ctrl.GetWork(ctx, 6803732)
-		assert.NoError(t, err)
-		assert.NotZero(t, ttl)
-
+		// Queue metrics can reach zero before asynchronously submitted edges
+		// arrive. Observe the actual catalogue rather than a fixed sleep.
 		var work workResource
-		require.NoError(t, json.Unmarshal(workBytes, &work))
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			workBytes, ttl, err := ctrl.GetWork(ctx, 6803732)
+			require.NoError(collect, err)
+			assert.NotZero(collect, ttl)
+			require.NoError(collect, json.Unmarshal(workBytes, &work))
+			require.Len(collect, work.Books, 3)
+		}, 5*time.Second, 10*time.Millisecond)
 
 		require.Len(t, work.Authors, 1)
 		assert.Equal(t, int64(51942), work.Authors[0].ForeignID)
@@ -671,7 +675,8 @@ func TestGRIntegration(t *testing.T) {
 		t.Parallel()
 		iter := getter.GetAuthorBooks(t.Context(), 4178)
 		gotBook := false
-		for range iter {
+		for _, err := range iter {
+			require.NoError(t, err)
 			gotBook = true
 			break
 		}

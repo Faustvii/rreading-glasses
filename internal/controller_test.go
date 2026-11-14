@@ -109,11 +109,11 @@ func TestIncrementalDenormalization(t *testing.T) {
 	}).AnyTimes()
 
 	getter.EXPECT().GetAuthorBooks(gomock.Any(), authorID).Return(
-		func(yield func(int64) bool) {
-			if !yield(englishEdition.ForeignID) {
+		func(yield func(int64, error) bool) {
+			if !yield(englishEdition.ForeignID, nil) {
 				return
 			}
-			if !yield(frenchEdition.ForeignID) {
+			if !yield(frenchEdition.ForeignID, nil) {
 				return
 			}
 		},
@@ -370,7 +370,10 @@ func TestSubtitles(t *testing.T) {
 		LinkItems: []seriesWorkLinkResource{},
 	}, nil)
 
-	getter.EXPECT().GetAuthorBooks(gomock.Any(), author.ForeignID).Return(iter.Seq[int64](func(func(int64) bool) {}))
+	catalogueEnumerated := make(chan struct{})
+	getter.EXPECT().GetAuthorBooks(gomock.Any(), author.ForeignID).Return(iter.Seq2[int64, error](func(func(int64, error) bool) {
+		close(catalogueEnumerated)
+	}))
 
 	err = ctrl.denormalizeWorks(ctx, author.ForeignID, workDupe1.ForeignID, workDupe2.ForeignID, workUnique.ForeignID)
 	require.NoError(t, err)
@@ -385,6 +388,14 @@ func TestSubtitles(t *testing.T) {
 
 	authorBytes, _, err := ctrl.GetAuthor(ctx, author.ForeignID)
 	require.NoError(t, err)
+
+	// GetAuthor returns before its queued catalogue job runs. Keep the mock
+	// alive until that job enumerates, even under single-CPU CI scheduling.
+	select {
+	case <-catalogueEnumerated:
+	case <-time.After(5 * time.Second):
+		t.Fatal("author catalogue refresh did not enumerate")
+	}
 
 	require.NoError(t, json.Unmarshal(authorBytes, &author))
 
@@ -486,7 +497,8 @@ func TestMergedWorks(t *testing.T) {
 	getter.EXPECT().GetWork(gomock.Any(), mergedID, nil).Return(workBytes, authorID, nil)
 
 	getter.EXPECT().GetAuthor(gomock.Any(), authorID).Return(authorBytes, nil)
-	getter.EXPECT().GetAuthorBooks(gomock.Any(), authorID).Return(nil)
+	refreshed := make(chan struct{})
+	getter.EXPECT().GetAuthorBooks(gomock.Any(), authorID).Return(iter.Seq2[int64, error](func(func(int64, error) bool) { close(refreshed) }))
 
 	err = ctrl.denormalizeWorks(ctx, authorID, workID, mergedID)
 	require.NoError(t, err)
@@ -499,6 +511,7 @@ func TestMergedWorks(t *testing.T) {
 	require.NoError(t, json.Unmarshal(authorBytes, &author))
 
 	assert.Len(t, author.Works, 1)
+	<-refreshed
 }
 
 func TestFuzz(t *testing.T) {

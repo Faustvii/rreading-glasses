@@ -413,7 +413,8 @@ func TestHardcoverIntegration(t *testing.T) {
 		t.Parallel()
 		iter := getter.GetAuthorBooks(t.Context(), 91460)
 		gotBook := false
-		for workID := range iter {
+		for workID, err := range iter {
+			require.NoError(t, err)
 			if workID == 30713111 {
 				gotBook = true
 			}
