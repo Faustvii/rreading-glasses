@@ -358,7 +358,8 @@ func TestBatchingOverflow(t *testing.T) {
 	client := &http.Client{
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			calls.Add(1)
-			body := `{"data": {}, "errors": []}`
+			alias := rootAliases(t, readQuery(t, r).Query)[0]
+			body := fmt.Sprintf(`{"data": {%q:null}, "errors": []}`, alias)
 			return &http.Response{
 				StatusCode: 200,
 				Body:       io.NopCloser(strings.NewReader(body)),
@@ -424,8 +425,9 @@ func TestBatchCancelledCallerReturnsWithoutFlush(t *testing.T) {
 }
 
 func TestBatchInteractivePriority(t *testing.T) {
-	client, err := NewBatchedGraphQLClient("https://example.invalid", &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"data":{}}`))}, nil
+	client, err := NewBatchedGraphQLClient("https://example.invalid", &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		alias := rootAliases(t, readQuery(t, r).Query)[0]
+		return testResponse(200, nil, fmt.Sprintf(`{"data":{%q:null}}`, alias)), nil
 	})}, time.Hour, 1, nil)
 	require.NoError(t, err)
 	batch := client.(*batchedgqlclient)

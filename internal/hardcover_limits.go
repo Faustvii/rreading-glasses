@@ -20,6 +20,8 @@ import (
 	"github.com/graphql-go/graphql/language/printer"
 	"github.com/graphql-go/graphql/language/visitor"
 	"github.com/prometheus/client_golang/prometheus"
+	gqlast "github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
 // upstreamError preserves the HTTP outcome independently of the response body.
@@ -29,7 +31,7 @@ type upstreamError struct {
 	RetryAt     time.Time `json:"retryAt"`
 	Daily       bool      `json:"daily"`
 	Capacity    bool      `json:"capacity"`
-	ServerRetry bool      `json:"-"`
+	ServerRetry bool      `json:"serverRetry,omitempty"`
 }
 
 func (e *upstreamError) Error() string { return fmt.Sprintf("upstream HTTP %d", e.Code) }
@@ -49,19 +51,20 @@ func (e *upstreamError) Unwrap() error {
 // hardcoverClient serializes attempts for one key, including retries. This lets
 // response headers affect the next attempt before any further request is sent.
 type hardcoverClient struct {
-	now      func() time.Time
-	wait     func(context.Context, time.Duration) error
-	endpoint string
-	http     *http.Client
-	cache    cache[[]byte]
-	cacheKey string
-	gate     chan struct{}
-	tokens   float64
-	burst    int
-	refill   float64
-	updated  time.Time
-	cooldown *upstreamError
-	metrics  *gqlMetrics
+	now       func() time.Time
+	wait      func(context.Context, time.Duration) error
+	endpoint  string
+	http      *http.Client
+	cache     cache[[]byte]
+	cacheKey  string
+	gate      chan struct{}
+	tokens    float64
+	burst     int
+	maxFields int
+	refill    float64
+	updated   time.Time
+	cooldown  *upstreamError
+	metrics   *gqlMetrics
 }
 
 // NewHardcoverGraphQLClient batches reads and applies Hardcover's field-based
@@ -95,7 +98,7 @@ func (c *hardcoverClient) MakeRequest(ctx context.Context, req *graphql.Request,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	parts, err := splitHardcoverQuery(req, c.burst)
+	parts, err := splitHardcoverQuery(req, c.requestCapacity())
 	if err != nil {
 		return err
 	}
@@ -107,8 +110,8 @@ func (c *hardcoverClient) MakeRequest(ctx context.Context, req *graphql.Request,
 		if err != nil {
 			return err
 		}
-		if cost > c.burst {
-			smaller, err := splitHardcoverQuery(part, c.burst)
+		if cost > c.requestCapacity() {
+			smaller, err := splitHardcoverQuery(part, c.requestCapacity())
 			if err != nil {
 				return err
 			}
@@ -120,7 +123,8 @@ func (c *hardcoverClient) MakeRequest(ctx context.Context, req *graphql.Request,
 		err = c.execute(ctx, part, result, cost)
 		var up *upstreamError
 		if errors.As(err, &up) && up.Capacity && cost > 1 {
-			smaller, splitErr := splitHardcoverQuery(part, max(1, cost/2))
+			c.maxFields = min(c.requestCapacity(), max(1, cost/2))
+			smaller, splitErr := splitHardcoverQuery(part, c.requestCapacity())
 			if splitErr != nil {
 				return splitErr
 			}
@@ -128,9 +132,20 @@ func (c *hardcoverClient) MakeRequest(ctx context.Context, req *graphql.Request,
 			continue
 		}
 		if err != nil && len(result.Errors) == 0 {
-			return err
+			// This part and all remaining parts are unanswered. Keep earlier
+			// results, but never turn these failures into successful null data.
+			for _, unanswered := range append([]*graphql.Request{part}, parts...) {
+				resp.Errors = append(resp.Errors, hardcoverPartErrors(unanswered, err)...)
+			}
+			break
 		}
-		resp.Errors = append(resp.Errors, result.Errors...)
+		for _, fieldErr := range result.Errors {
+			if len(fieldErr.Path) == 0 {
+				resp.Errors = append(resp.Errors, hardcoverPartErrors(part, fieldErr)...)
+			} else {
+				resp.Errors = append(resp.Errors, fieldErr)
+			}
+		}
 		for k, v := range out {
 			data[k] = v
 		}
@@ -139,8 +154,10 @@ func (c *hardcoverClient) MakeRequest(ctx context.Context, req *graphql.Request,
 	if err != nil {
 		return err
 	}
-	if err = json.Unmarshal(b, resp.Data); err != nil {
-		return err
+	if resp.Data != nil {
+		if err = json.Unmarshal(b, resp.Data); err != nil {
+			return err
+		}
 	}
 	if len(resp.Errors) > 0 {
 		return resp.Errors
@@ -530,7 +547,56 @@ func splitHardcoverQuery(req *graphql.Request, capacity int) ([]*graphql.Request
 			}
 		}
 		copyReq.Query = printer.Print(&pruned).(string)
+		allVars := map[string]any{}
+		if req.Variables != nil {
+			b, err := json.Marshal(req.Variables)
+			if err != nil {
+				return nil, err
+			}
+			if err = json.Unmarshal(b, &allVars); err != nil {
+				return nil, err
+			}
+		}
+		partVars := map[string]any{}
+		for name := range usedVars {
+			if value, ok := allVars[name]; ok {
+				partVars[name] = value
+			}
+		}
+		copyReq.Variables = partVars
 		parts = append(parts, &copyReq)
 	}
 	return parts, nil
+}
+
+// A transport or pathless GraphQL error affects only aliases in its own part.
+// Err retains typed causes (including a daily reset) for each subscriber.
+func hardcoverPartErrors(req *graphql.Request, cause error) gqlerror.List {
+	doc, err := parser.Parse(parser.ParseParams{Source: req.Query})
+	if err != nil {
+		return gqlerror.List{&gqlerror.Error{Message: cause.Error(), Err: cause}}
+	}
+	fields, _, err := hardcoverFields(doc)
+	if err != nil {
+		return gqlerror.List{&gqlerror.Error{Message: cause.Error(), Err: cause}}
+	}
+	result := make(gqlerror.List, 0, len(fields))
+	for _, sel := range fields {
+		field := sel.(*ast.Field)
+		name := field.Name.Value
+		if field.Alias != nil {
+			name = field.Alias.Value
+		}
+		result = append(result, &gqlerror.Error{Message: cause.Error(), Err: cause, Path: gqlast.Path{gqlast.PathName(name)}})
+	}
+	return result
+}
+
+// A rejected request teaches an independent per-request ceiling. Token-bucket
+// policy headers can update burst capacity without forgetting that ceiling.
+func (c *hardcoverClient) requestCapacity() int {
+	if c.maxFields > 0 {
+		return min(c.burst, c.maxFields)
+	}
+	return c.burst
 }

@@ -216,8 +216,7 @@ func (c *batchedgqlclient) flush(ctx context.Context) {
 			if err == nil {
 				break
 			}
-			var httpErr *graphql.HTTPError
-			if !errors.As(err, &httpErr) || (httpErr.StatusCode != 429 && httpErr.StatusCode < 500) || attempt == 4 {
+			if !retryableBatchError(err) || attempt == 4 {
 				break
 			}
 			// Hardcover handles retries through its shared scheduler. Other
@@ -245,13 +244,14 @@ func (c *batchedgqlclient) flush(ctx context.Context) {
 					}
 					break
 				}
-				sub, ok := batch.subscribers[fmt.Sprint(e.Path[0])]
+				id := fmt.Sprint(e.Path[0])
+				sub, ok := batch.subscribers[id]
 				if !ok {
 					continue
 				}
 				sub.respC <- errors.Join(gqlStatusErr(e), statusErr(502))
 				// Remove our subscriber because we already responded.
-				delete(batch.subscribers, e.Path.String())
+				delete(batch.subscribers, id)
 			}
 		} else if err != nil {
 			// For everything else return the status code to all our subscribers.
@@ -263,7 +263,10 @@ func (c *batchedgqlclient) flush(ctx context.Context) {
 		}
 
 		for id, sub := range batch.subscribers {
-			// TODO: missing response.
+			if _, present := data[id]; !present {
+				sub.respC <- &upstreamError{Code: 502}
+				continue
+			}
 			byt, err := json.Marshal(map[string]any{
 				sub.field: data[id],
 			})
@@ -491,4 +494,18 @@ func (qb *queryBuilder) build() (string, map[string]any, error) {
 	}
 
 	return builder.String(), qb.vars, nil
+}
+
+// The Goodreads transport returns statusErr before genqlient can construct an
+// HTTPError. Both preserve the status through wrapping by http.Client.
+func retryableBatchError(err error) bool {
+	var h *graphql.HTTPError
+	var s statusErr
+	code := 0
+	if errors.As(err, &h) {
+		code = h.StatusCode
+	} else if errors.As(err, &s) {
+		code = s.Status()
+	}
+	return code == 429 || (code >= 500 && code <= 599)
 }
