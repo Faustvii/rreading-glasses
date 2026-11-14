@@ -116,8 +116,6 @@ When using Hardcover you must set the `hardcover-auth` parameter.
 Note that your API key **will expire every year on January 1**, so you'll need
 to periodically regenerate it.
 
-Hardcover rate limiting and refresh recovery are described in [Hardcover API usage](docs/hardcover-quota-handling.md).
-
 ### Resource Requirements
 
 Resource requirements are minimal; a Raspberry Pi should suffice. Storage
