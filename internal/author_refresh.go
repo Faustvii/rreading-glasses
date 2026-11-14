@@ -70,12 +70,20 @@ func (c *Controller) getIncidentalAuthor(ctx context.Context, id int64) ([]byte,
 	}
 	defer unlock()
 	for _, key := range []string{AuthorKey(id), shallowAuthorKey(id), refreshAuthorKey(id)} {
-		if b, ttl, ok := c.cache.GetWithTTL(ctx, key); ok && ttl > 0 {
-			if slices.Equal(b, _missing) {
-				return nil, errNotFound
-			}
-			return b, nil
+		b, ttl, ok := c.cache.GetWithTTL(ctx, key)
+		if !ok {
+			continue
 		}
+		// The matching catalogue owner already fetched this metadata. Explicit
+		// expiry does not require another upstream lookup to finish its work.
+		savedForOwner := key == AuthorKey(id) && ctx.Value(catalogueRefreshKey{}) == id && len(b) > 0 && !slices.Equal(b, _missing)
+		if ttl <= 0 && !savedForOwner {
+			continue
+		}
+		if slices.Equal(b, _missing) {
+			return nil, errNotFound
+		}
+		return b, nil
 	}
 	b, err := c.getter.GetAuthor(ctx, id)
 	if err != nil {

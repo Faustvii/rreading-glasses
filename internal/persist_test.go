@@ -291,7 +291,8 @@ func TestActiveRefreshPublishesFullCatalogueAfterExplicitExpiry(t *testing.T) {
 		<-release
 		yield(99, nil)
 	}))
-	get.EXPECT().GetAuthor(gomock.Any(), id).Return(partial, nil)
+	var metadataCalls int
+	get.EXPECT().GetAuthor(gomock.Any(), id).DoAndReturn(func(context.Context, int64) ([]byte, error) { metadataCalls++; return nil, errNotFound }).AnyTimes()
 	get.EXPECT().GetWork(gomock.Any(), int64(97), nil).Return(firstWork, int64(0), nil)
 	get.EXPECT().GetWork(gomock.Any(), int64(100), nil).Return(secondWork, int64(0), nil)
 	finished := make(chan error, 1)
@@ -304,6 +305,7 @@ func TestActiveRefreshPublishesFullCatalogueAfterExplicitExpiry(t *testing.T) {
 	require.Equal(t, full, during)
 	close(release)
 	require.NoError(t, <-finished)
+	require.Zero(t, metadataCalls, "the active job fetched metadata it already had")
 	// Accept an erroneous second queue entry so a regression fails on the data,
 	// instead of hanging while getAuthor waits for its queue consumer.
 	queued := make(chan refreshAuthor, 1)
@@ -325,5 +327,65 @@ func TestActiveRefreshPublishesFullCatalogueAfterExplicitExpiry(t *testing.T) {
 	case <-queued:
 		t.Fatal("completed catalogue was enqueued a second time")
 	default:
+	}
+}
+
+func TestOnlyMatchingCatalogueOwnerReusesExpiredMetadata(t *testing.T) {
+	const id = int64(987654327)
+	saved := []byte(`{"foreignId":987654327,"name":"saved"}`)
+	fresh := []byte(`{"foreignId":987654327,"name":"fresh"}`)
+	for _, tc := range []struct {
+		name     string
+		owner    int64
+		value    []byte
+		expired  bool
+		absent   bool
+		fetch    bool
+		notFound bool
+	}{
+		{name: "matching owner", owner: id, value: saved, expired: true},
+		{name: "other owner", owner: id + 1, value: saved, expired: true, fetch: true},
+		{name: "ordinary incidental caller", value: saved, expired: true, fetch: true},
+		{name: "expired negative entry", owner: id, value: _missing, expired: true, fetch: true},
+		{name: "missing entry", owner: id, absent: true, fetch: true},
+		{name: "fresh negative entry", owner: id, value: _missing, notFound: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			if tc.owner != 0 {
+				ctx = context.WithValue(ctx, catalogueRefreshKey{}, tc.owner)
+			}
+			store, err := newPostgresCache(ctx, "postgres://postgres@localhost:5432/test", nil)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				for _, key := range []string{AuthorKey(id), shallowAuthorKey(id)} {
+					require.NoError(t, store.Delete(context.Background(), key))
+				}
+				store.db.Close()
+			})
+			if !tc.absent {
+				store.Set(ctx, AuthorKey(id), tc.value, time.Hour)
+				if tc.expired {
+					require.NoError(t, store.Expire(ctx, AuthorKey(id)))
+				}
+			}
+			get := NewMockgetter(gomock.NewController(t))
+			c, err := NewController(store, get, nil, nil)
+			require.NoError(t, err)
+			if tc.fetch {
+				get.EXPECT().GetAuthor(gomock.Any(), id).Return(fresh, nil)
+			}
+			data, err := c.getIncidentalAuthor(ctx, id)
+			if tc.notFound {
+				require.ErrorIs(t, err, errNotFound)
+				return
+			}
+			require.NoError(t, err)
+			expected := saved
+			if tc.fetch {
+				expected = fresh
+			}
+			require.Equal(t, expected, data)
+		})
 	}
 }
