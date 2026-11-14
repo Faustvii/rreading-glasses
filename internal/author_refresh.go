@@ -18,6 +18,8 @@ import (
 func shallowAuthorKey(id int64) string { return fmt.Sprintf("shallow-author-%d", id) }
 func authorRetryKey(id int64) string   { return fmt.Sprintf("author-retry-%d", id) }
 
+type catalogueRefreshKey struct{}
+
 type authorLock struct {
 	gate chan struct{}
 	refs int

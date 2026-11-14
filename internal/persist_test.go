@@ -250,3 +250,80 @@ func TestForcedRefreshDuringActiveJobDoesNotPersistDuplicate(t *testing.T) {
 	_, ok = store.Get(ctx, refreshAuthorKey(id))
 	require.False(t, ok)
 }
+
+func TestActiveRefreshPublishesFullCatalogueAfterExplicitExpiry(t *testing.T) {
+	ctx := t.Context()
+	store, err := newPostgresCache(ctx, "postgres://postgres@localhost:5432/test", nil)
+	require.NoError(t, err)
+	const id = int64(987654326)
+	keys := []string{AuthorKey(id), refreshAuthorKey(id), shallowAuthorKey(id), authorRetryKey(id), BookKey(98), BookKey(99), WorkKey(97), WorkKey(100)}
+	t.Cleanup(func() {
+		for _, key := range keys {
+			require.NoError(t, store.Delete(context.Background(), key))
+		}
+		store.db.Close()
+	})
+	get := NewMockgetter(gomock.NewController(t))
+	p := &Persister{cache: store}
+	c, err := NewController(store, get, p, nil)
+	require.NoError(t, err)
+	one := workResource{ForeignID: 97, Books: []bookResource{{ForeignID: 98}}}
+	two := workResource{ForeignID: 100, Books: []bookResource{{ForeignID: 99}}}
+	full, _ := json.Marshal(AuthorResource{ForeignID: id, Name: "full", Works: []workResource{one, two}})
+	partial, _ := json.Marshal(AuthorResource{ForeignID: id, Name: "promotion", Works: []workResource{one}})
+	firstWork, _ := json.Marshal(one)
+	secondWork, _ := json.Marshal(two)
+	store.Set(ctx, AuthorKey(id), partial, time.Hour)
+	require.NoError(t, p.Persist(ctx, id, full))
+	for _, entry := range []struct {
+		key  string
+		data []byte
+	}{{BookKey(98), firstWork}, {BookKey(99), secondWork}, {WorkKey(97), firstWork}, {WorkKey(100), secondWork}} {
+		store.Set(ctx, entry.key, entry.data, time.Hour)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	get.EXPECT().GetAuthorBooks(gomock.Any(), id).Return(iter.Seq2[int64, error](func(yield func(int64, error) bool) {
+		if !yield(98, nil) {
+			return
+		}
+		close(started)
+		<-release
+		yield(99, nil)
+	}))
+	get.EXPECT().GetAuthor(gomock.Any(), id).Return(partial, nil)
+	get.EXPECT().GetWork(gomock.Any(), int64(97), nil).Return(firstWork, int64(0), nil)
+	get.EXPECT().GetWork(gomock.Any(), int64(100), nil).Return(secondWork, int64(0), nil)
+	finished := make(chan error, 1)
+	go func() { finished <- c.refreshAuthor(ctx, id, full) }()
+	<-started
+	require.NoError(t, store.Expire(ctx, AuthorKey(id)))
+	require.NoError(t, store.Expire(ctx, refreshAuthorKey(id)))
+	during, _, err := c.GetAuthor(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, full, during)
+	close(release)
+	require.NoError(t, <-finished)
+	// Accept an erroneous second queue entry so a regression fails on the data,
+	// instead of hanging while getAuthor waits for its queue consumer.
+	queued := make(chan refreshAuthor, 1)
+	go func() {
+		select {
+		case r := <-c.refreshC:
+			queued <- r
+		case <-ctx.Done():
+		}
+	}()
+	after, _, err := c.GetAuthor(ctx, id)
+	require.NoError(t, err)
+	var author AuthorResource
+	require.NoError(t, json.Unmarshal(after, &author))
+	require.Len(t, author.Works, 2)
+	_, ok := store.Get(ctx, refreshAuthorKey(id))
+	require.False(t, ok, "completed catalogue caused another full refresh")
+	select {
+	case <-queued:
+		t.Fatal("completed catalogue was enqueued a second time")
+	default:
+	}
+}

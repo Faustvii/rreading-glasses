@@ -734,6 +734,7 @@ func (c *Controller) refreshAuthor(ctx context.Context, authorID int64, cachedBy
 	defer c.refreshing.Delete(authorID)
 	ctx = context.WithValue(ctx, middleware.RequestIDKey, fmt.Sprintf("refresh-author-%d", authorID))
 	ctx = context.WithValue(ctx, backgroundRequestKey{}, true)
+	ctx = context.WithValue(ctx, catalogueRefreshKey{}, authorID)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -1026,7 +1027,10 @@ func (c *Controller) denormalizeWorks(ctx context.Context, authorID int64, workI
 	defer unlock()
 	// A concurrent explicit load can promote shallow data before this lock.
 	key := AuthorKey(authorID)
-	if current, ttl, ok := c.cache.GetWithTTL(ctx, key); ok && ttl > 0 && !slices.Equal(current, _missing) {
+	// Explicit expiry must not redirect the active catalogue's final result
+	// into incidental metadata. Only its owner can publish an expired entry.
+	publishingCatalogue := ctx.Value(catalogueRefreshKey{}) == authorID
+	if current, ttl, ok := c.cache.GetWithTTL(ctx, key); ok && (ttl > 0 || publishingCatalogue) && !slices.Equal(current, _missing) {
 		authorBytes = current
 	} else {
 		key = shallowAuthorKey(authorID)
