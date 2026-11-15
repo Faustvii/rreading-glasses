@@ -15,7 +15,7 @@ require (
 	github.com/alecthomas/kong v1.17.0
 	github.com/blampe/isbn v0.0.0-20250824003930-4baf6973b7fc
 	github.com/bytedance/sonic v1.15.5
-	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/charmbracelet/lipgloss/v2 v2.1.1
 	github.com/charmbracelet/log v0.4.2
 	github.com/dgraph-io/ristretto/v2 v2.4.2
 	github.com/go-chi/chi/v5 v5.5.0
