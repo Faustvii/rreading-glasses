@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/Faustvii/rreading-glasses/compare/v1.1.0...v1.1.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **api:** respect hardcover quotas and preserve interrupted refreshes ([#35](https://github.com/Faustvii/rreading-glasses/issues/35)) ([c94134a](https://github.com/Faustvii/rreading-glasses/commit/c94134aa59fdac366971001f06adacb3a4bc18f9))
+* **api:** update denormalization metrics when the queue changes ([#39](https://github.com/Faustvii/rreading-glasses/issues/39)) ([7565085](https://github.com/Faustvii/rreading-glasses/commit/75650851ffd28500aba668a71cad57a7f3ee69f4))
+
 ## [1.1.0](https://github.com/Faustvii/rreading-glasses/compare/v1.0.0...v1.1.0) (2026-11-13)
 
 
