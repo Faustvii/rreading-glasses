@@ -41,7 +41,18 @@ var _asin = regexp.MustCompile(`^B[A-Z0-9]{9}$`)
 var (
 	_searchTTL      = 24 * time.Hour
 	_recommendedTTL = 24 * time.Hour
+
+	// _partialAuthorTTL caps how long shared caches keep an author whose
+	// catalogue is still loading, so clients see the full list soon after it
+	// is ready.
+	_partialAuthorTTL = time.Minute
 )
+
+// _catalogStatusHeader tells clients how much of the author's catalogue an
+// author response holds: "complete", "loading" (fetch again soon to get the
+// full list), or "truncated" (a page limit stopped the last refresh, and the
+// list will not grow before the next scheduled refresh).
+const _catalogStatusHeader = "X-Catalog-Status"
 
 //go:embed swagger.json
 var _spec embed.FS
@@ -512,10 +523,23 @@ func (h *Handler) getAuthorID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check before and after loading: a first load only becomes pending
+	// during GetAuthor, and a refresh can finish while we respond. Reporting
+	// a finished catalogue as loading is harmless, the reverse is not.
+	before := h.ctrl.AuthorCatalogStatus(ctx, authorID)
 	out, ttl, err := h.ctrl.GetAuthor(r.Context(), authorID)
 	if err != nil {
 		h.error(w, err)
 		return
+	}
+	status := h.ctrl.AuthorCatalogStatus(ctx, authorID)
+	if before == catalogLoading {
+		status = catalogLoading
+	}
+	w.Header().Set(_catalogStatusHeader, string(status))
+	loading := status == catalogLoading
+	if loading {
+		ttl = min(ttl, _partialAuthorTTL)
 	}
 
 	// If a specific edition was requested, mutate the returned author to
@@ -548,6 +572,9 @@ func (h *Handler) getAuthorID(w http.ResponseWriter, r *http.Request) {
 
 		author.Works = []workResource{work}
 
+		if loading {
+			ttl = min(ttl, _partialAuthorTTL)
+		}
 		if ttl > 0 {
 			cacheFor(w, ttl, true)
 		}
