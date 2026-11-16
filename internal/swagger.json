@@ -37,6 +37,13 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal.AuthorResource"
+                        },
+                        "headers": {
+                            "X-Catalog-Status": {
+                                "type": "string",
+                                "enum": ["complete", "loading", "truncated"],
+                                "description": "\"loading\" while the author's catalog is still loading and the response holds only part of the works. Fetch the author again later to get the full list. \"truncated\" when the last refresh stopped at a page limit: the works are valid but incomplete, and the list does not grow before the next scheduled refresh. \"complete\" when the last refresh listed every work. A missing header means the server does not report catalog state."
+                            }
                         }
                     }
                 }

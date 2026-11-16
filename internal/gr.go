@@ -556,14 +556,31 @@ func (g *GRGetter) GetAuthorBooks(ctx context.Context, authorID int64) iter.Seq2
 	var author AuthorResource
 	_ = sonic.ConfigStd.Unmarshal(authorBytes, &author)
 
+	return g.authorBookIDs(ctx, authorID, author.KCA)
+}
+
+// _grCursorLimit is the message GR returns when a page token points past the
+// window it is willing to serve (500 entries in practice). It arrives as a
+// GraphQL BAD_REQUEST error on an HTTP 200 response, even though GR advertised
+// the page with hasNextPage and nextPageToken.
+const _grCursorLimit = "Cursor is too large for the limit"
+
+// authorBookIDs pages through the author's works and yields the best edition
+// of each work the author wrote.
+func (g *GRGetter) authorBookIDs(ctx context.Context, authorID int64, authorKCA string) iter.Seq2[int64, error] {
 	return func(yield func(int64, error) bool) {
 		after := ""
 		for {
 			works, err := gr.GetAuthorWorks(ctx, g.gql, gr.GetWorksByContributorInput{
-				Id: author.KCA,
+				Id: authorKCA,
 			}, gr.PaginationInput{Limit: 20, After: after})
+			if err != nil && strings.Contains(err.Error(), _grCursorLimit) {
+				Log(ctx).Warn("upstream page limit reached; catalogue is truncated", "author", authorID, "authorKCA", authorKCA, "after", after)
+				yield(0, fmt.Errorf("%w: %w", errCatalogTruncated, err))
+				return
+			}
 			if err != nil {
-				Log(ctx).Warn("problem getting author works", "err", err, "author", authorID, "authorKCA", author.KCA, "after", after)
+				Log(ctx).Warn("problem getting author works", "err", err, "author", authorID, "authorKCA", authorKCA, "after", after)
 				yield(0, err)
 				return
 			}

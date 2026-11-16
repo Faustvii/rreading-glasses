@@ -331,6 +331,40 @@ func (c *Controller) GetAuthor(ctx context.Context, authorID int64) ([]byte, tim
 	return c.lookupResource(ctx, AuthorKey(authorID), func(shared context.Context) (ttlpair, error) { return c.getAuthor(shared, authorID) })
 }
 
+// catalogStatus describes how much of an author's catalogue a response holds.
+type catalogStatus string
+
+const (
+	// catalogComplete means the last catalogue refresh listed every work.
+	catalogComplete catalogStatus = "complete"
+	// catalogLoading means a refresh is pending or running, so GetAuthor
+	// serves a shallow author or a pre-refresh snapshot. Fetch again soon.
+	catalogLoading catalogStatus = "loading"
+	// catalogTruncated means the last refresh finished but stopped at a page
+	// limit. The works are final until the next scheduled refresh.
+	catalogTruncated catalogStatus = "truncated"
+)
+
+// truncatedAuthorKey marks an author whose last catalogue refresh stopped at
+// a page limit. A later refresh rewrites or removes it.
+func truncatedAuthorKey(id int64) string { return fmt.Sprintf("author-truncated-%d", id) }
+
+// AuthorCatalogStatus reports whether the author's catalogue is complete,
+// still loading, or truncated by a page limit. Loading takes precedence,
+// because a running refresh replaces the previous result.
+func (c *Controller) AuthorCatalogStatus(ctx context.Context, authorID int64) catalogStatus {
+	if _, running := c.refreshing.Load(authorID); running {
+		return catalogLoading
+	}
+	if _, ttl, pending := c.cache.GetWithTTL(ctx, refreshAuthorKey(authorID)); pending && ttl > 0 {
+		return catalogLoading
+	}
+	if _, ttl, truncated := c.cache.GetWithTTL(ctx, truncatedAuthorKey(authorID)); truncated && ttl > 0 {
+		return catalogTruncated
+	}
+	return catalogComplete
+}
+
 // GetSeries returns a cached series if one exists.
 func (c *Controller) GetSeries(ctx context.Context, seriesID int64) ([]byte, error) {
 	out, err, _ := c.group.Do(seriesKey(seriesID), func() (any, error) {
@@ -769,12 +803,20 @@ func (c *Controller) refreshAuthor(ctx context.Context, authorID int64, cachedBy
 		}
 	}()
 
+	truncated := ""
 	for bookID, err := range c.getter.GetAuthorBooks(ctx, authorID) {
+		if errors.Is(err, errCatalogTruncated) {
+			// The upstream will not page further. Keep what we have and
+			// finish, because retrying reaches the same limit.
+			truncated = "upstream page limit"
+			break
+		}
 		if err != nil {
 			return err
 		}
 		if n >= 1000 {
 			Log(ctx).Warn("found too many editions", "authorID", authorID)
+			truncated = "local edition limit"
 			break // Some authors (e.g. Wikipedia) have an obscene number of works. Give up.
 		}
 		n++
@@ -810,10 +852,21 @@ func (c *Controller) refreshAuthor(ctx context.Context, authorID int64, cachedBy
 			return err
 		}
 	}
+	// Record truncation before removing the snapshot, so the status never
+	// reads complete for a truncated catalogue.
+	if truncated != "" {
+		c.cache.Set(ctx, truncatedAuthorKey(authorID), []byte(truncated), 365*24*time.Hour)
+	} else {
+		_ = c.cache.Delete(ctx, truncatedAuthorKey(authorID))
+	}
 	if err := c.persister.Delete(ctx, authorID); err != nil {
 		return err
 	}
 	_ = c.cache.Delete(ctx, authorRetryKey(authorID))
+	if truncated != "" {
+		Log(ctx).Warn("fetched truncated catalogue for author", "authorID", authorID, "reason", truncated, "count", len(workIDSToDenormalize), "duration", time.Since(start).String())
+		return nil
+	}
 	Log(ctx).Info("fetched all works for author", "authorID", authorID, "count", len(workIDSToDenormalize), "duration", time.Since(start).String())
 	return nil
 }
