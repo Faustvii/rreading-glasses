@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/Faustvii/rreading-glasses/compare/v1.1.1...v1.2.0) (2026-11-16)
+
+
+### Features
+
+* **api:** report author catalog status and finish truncated catalogs ([#48](https://github.com/Faustvii/rreading-glasses/issues/48)) ([65f06db](https://github.com/Faustvii/rreading-glasses/commit/65f06dba3b1a8fa74c2bf24c694811a41f669d94))
+
 ## [1.1.1](https://github.com/Faustvii/rreading-glasses/compare/v1.1.0...v1.1.1) (2026-11-14)
 
 
