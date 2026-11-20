@@ -24,7 +24,7 @@ services:
       - "8788:8788"
 
   rreading-glasses-db:
-    image: postgres:17
+    image: postgres:19
     container_name: rreading-glasses-db
     hostname: rreading-glasses-db
     restart: unless-stopped
