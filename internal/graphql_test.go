@@ -156,7 +156,7 @@ fragment WorkInfo on books {
   }
   rating
   ratings_count
-  book_mappings(where: {platform: {name: {_eq: "Goodreads"}}}) {
+  book_mappings(where: {platform_id: {_eq: 1}}) {
     external_id
   }
   ...DefaultEditions
