@@ -8,6 +8,7 @@ import (
 	"iter"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -318,6 +319,8 @@ func mapHardcoverToWorkResource(ctx context.Context, edition hardcover.EditionIn
 		RatingCount:   work.Ratings_count,
 		RatingSum:     int64(float64(work.Ratings_count) * work.Rating),
 		AverageRating: work.Rating,
+
+		GoodreadsBookIDs: goodreadsBookIDs(work.Book_mappings),
 	}
 
 	bookRsc.Contributors = []contributorResource{{ForeignID: author.Id, Role: "Author"}}
@@ -326,6 +329,25 @@ func mapHardcoverToWorkResource(ctx context.Context, edition hardcover.EditionIn
 	workRsc.Books = []bookResource{bookRsc} // TODO: Add best book here as well?
 
 	return workRsc, nil
+}
+
+// goodreadsBookIDs returns the Goodreads edition ids Hardcover maps to a work,
+// distinct and sorted ascending. Mappings whose external_id isn't a positive
+// integer are skipped. The result is nil if there are none, so that the field
+// is omitted from the response.
+func goodreadsBookIDs(mappings []hardcover.WorkInfoBook_mappings) []int64 {
+	ids := map[int64]struct{}{}
+	for _, m := range mappings {
+		id, err := strconv.ParseInt(strings.TrimSpace(m.External_id), 10, 64)
+		if err != nil || id <= 0 {
+			continue
+		}
+		ids[id] = struct{}{}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(ids))
 }
 
 // GetAuthorBooks returns all GR book (edition) IDs.

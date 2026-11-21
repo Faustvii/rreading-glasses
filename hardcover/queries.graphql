@@ -88,6 +88,13 @@ fragment WorkInfo on books {
   }
   rating
   ratings_count
+  # Platform 1 is Goodreads on Hardcover, confirmed against the live API
+  # (`{ platforms(where: {name: {_ilike: "goodreads"}}) { id name } }` returns
+  # id 1, name "goodreads"). Match the id rather than the name: the name is
+  # lowercase upstream, so `_eq: "Goodreads"` returns no rows.
+  book_mappings(where: { platform_id: { _eq: 1 } }) {
+    external_id
+  }
   ...DefaultEditions
 }
 

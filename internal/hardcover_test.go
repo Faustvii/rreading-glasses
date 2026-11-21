@@ -176,6 +176,11 @@ func TestGetBookDataIntegrity(t *testing.T) {
 					Book: hardcover.GetEditionEditions_by_pkEditionsBookBooks{
 						WorkInfo: hardcover.WorkInfo{
 							Id: 141397,
+							Book_mappings: []hardcover.WorkInfoBook_mappings{
+								{External_id: "29060401"},
+								{External_id: "29060401"}, // Duplicate.
+								{External_id: "1"},
+							},
 							DefaultEditions: hardcover.DefaultEditions{
 								Contributions: []hardcover.DefaultEditionsContributions{
 									{
@@ -293,6 +298,7 @@ func TestGetBookDataIntegrity(t *testing.T) {
 
 		require.Len(t, work.Books, 1)
 		assert.Equal(t, int64(30405274), work.Books[0].ForeignID)
+		assert.Equal(t, []int64{1, 29060401}, work.GoodreadsBookIDs)
 	})
 
 	waitForDenorm(ctrl)
@@ -311,6 +317,7 @@ func TestGetBookDataIntegrity(t *testing.T) {
 		require.Len(t, author.Works, 1)
 		require.Len(t, author.Works[0].Authors, 1)
 		require.Len(t, author.Works[0].Books, 1)
+		assert.Equal(t, []int64{1, 29060401}, author.Works[0].GoodreadsBookIDs)
 	})
 
 	t.Run("GetWork", func(t *testing.T) {
@@ -327,6 +334,7 @@ func TestGetBookDataIntegrity(t *testing.T) {
 
 		require.Len(t, work.Books, 1)
 		assert.Equal(t, int64(30405274), work.Books[0].ForeignID)
+		assert.Equal(t, []int64{1, 29060401}, work.GoodreadsBookIDs)
 	})
 }
 
@@ -562,6 +570,107 @@ func TestBestAuthor(t *testing.T) {
 			assert.Equal(t, tt.want, actual.Id)
 		})
 	}
+}
+
+func TestGoodreadsBookIDs(t *testing.T) {
+	mapping := func(ids ...string) []hardcover.WorkInfoBook_mappings {
+		mappings := []hardcover.WorkInfoBook_mappings{}
+		for _, id := range ids {
+			mappings = append(mappings, hardcover.WorkInfoBook_mappings{External_id: id})
+		}
+		return mappings
+	}
+
+	tests := []struct {
+		name  string
+		given []hardcover.WorkInfoBook_mappings
+		want  []int64
+	}{
+		{
+			name:  "sorted and deduplicated",
+			given: mapping("30", "1", "30", "7"),
+			want:  []int64{1, 7, 30},
+		},
+		{
+			name:  "mappings without an edition are still included",
+			given: mapping("12345"),
+			want:  []int64{12345},
+		},
+		{
+			name:  "non-numeric external ids are skipped",
+			given: mapping("foo", "2", ""),
+			want:  []int64{2},
+		},
+		{
+			name:  "non-positive external ids are skipped",
+			given: mapping("0", "-3", "4"),
+			want:  []int64{4},
+		},
+		{
+			name:  "all invalid",
+			given: mapping("foo", "0"),
+			want:  nil,
+		},
+		{
+			name:  "no mappings",
+			given: nil,
+			want:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, goodreadsBookIDs(tt.given))
+		})
+	}
+}
+
+func TestMapHardcoverGoodreadsBookIDs(t *testing.T) {
+	t.Parallel()
+
+	edition := hardcover.EditionInfo{Id: 30405274, Title: "Out of My Mind"}
+	work := hardcover.WorkInfo{
+		Id:    141397,
+		Title: "Out of My Mind",
+		Slug:  "out-of-my-mind",
+		DefaultEditions: hardcover.DefaultEditions{
+			Id: 141397,
+			Contributions: []hardcover.DefaultEditionsContributions{
+				{
+					Contributions: hardcover.Contributions{
+						Author: hardcover.ContributionsAuthorAuthors{
+							AuthorInfo: hardcover.AuthorInfo{Id: 51942},
+						},
+					},
+				},
+			},
+			Fallback: []hardcover.DefaultEditionsFallbackEditions{{Id: 30405274}},
+		},
+		Book_mappings: []hardcover.WorkInfoBook_mappings{
+			{External_id: "99"},
+			{External_id: "12345"},
+			{External_id: "12345"},
+			{External_id: "not-a-number"},
+		},
+	}
+
+	workRsc, err := mapHardcoverToWorkResource(context.Background(), edition, work)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{99, 12345}, workRsc.GoodreadsBookIDs)
+
+	out, err := json.Marshal(workRsc)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"GoodreadsBookIds":[99,12345]`)
+
+	// The field is omitted entirely when the work has no Goodreads mappings.
+	work.Book_mappings = nil
+	workRsc, err = mapHardcoverToWorkResource(context.Background(), edition, work)
+	require.NoError(t, err)
+	assert.Nil(t, workRsc.GoodreadsBookIDs)
+
+	out, err = json.Marshal(workRsc)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "GoodreadsBookIds")
 }
 
 func TestHCReleaseDate(t *testing.T) {

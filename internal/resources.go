@@ -31,6 +31,11 @@ type workResource struct {
 	RatingCount   int64   `json:"RatingCount"`
 	AverageRating float64 `json:"AverageRating"`
 	RatingSum     int64   `json:"RatingSum"`
+
+	// GoodreadsBookIDs lists the distinct Goodreads edition ids Hardcover maps
+	// to this work, sorted ascending. Absent when there are none; the Goodreads
+	// getter never sets it.
+	GoodreadsBookIDs []int64 `json:"GoodreadsBookIds,omitempty"`
 }
 
 // AuthorResource collects every edition of every work by an author.

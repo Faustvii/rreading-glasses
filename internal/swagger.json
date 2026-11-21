@@ -543,6 +543,13 @@
                         "type": "string"
                     }
                 },
+                "GoodreadsBookIds": {
+                    "description": "GoodreadsBookIDs lists the distinct Goodreads edition ids Hardcover maps to this work, sorted ascending. Absent when there are none; the Goodreads getter never sets it.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "KCA": {
                     "description": "New fields",
                     "type": "string"
