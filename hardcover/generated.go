@@ -1250,6 +1250,11 @@ func (v *GetEditionEditions_by_pkEditionsBookBooks) GetRatings_count() int64 {
 	return v.WorkInfo.Ratings_count
 }
 
+// GetBook_mappings returns GetEditionEditions_by_pkEditionsBookBooks.Book_mappings, and is useful for accessing the field via an interface.
+func (v *GetEditionEditions_by_pkEditionsBookBooks) GetBook_mappings() []WorkInfoBook_mappings {
+	return v.WorkInfo.Book_mappings
+}
+
 // GetContributions returns GetEditionEditions_by_pkEditionsBookBooks.Contributions, and is useful for accessing the field via an interface.
 func (v *GetEditionEditions_by_pkEditionsBookBooks) GetContributions() []DefaultEditionsContributions {
 	return v.WorkInfo.DefaultEditions.Contributions
@@ -1332,6 +1337,8 @@ type __premarshalGetEditionEditions_by_pkEditionsBookBooks struct {
 
 	Ratings_count int64 `json:"ratings_count"`
 
+	Book_mappings []WorkInfoBook_mappings `json:"book_mappings"`
+
 	Contributions []DefaultEditionsContributions `json:"contributions"`
 
 	Default_audio_edition DefaultEditionsDefault_audio_editionEditions `json:"default_audio_edition"`
@@ -1369,6 +1376,7 @@ func (v *GetEditionEditions_by_pkEditionsBookBooks) __premarshalJSON() (*__prema
 	retval.Book_series = v.WorkInfo.Book_series
 	retval.Rating = v.WorkInfo.Rating
 	retval.Ratings_count = v.WorkInfo.Ratings_count
+	retval.Book_mappings = v.WorkInfo.Book_mappings
 	retval.Contributions = v.WorkInfo.DefaultEditions.Contributions
 	retval.Default_audio_edition = v.WorkInfo.DefaultEditions.Default_audio_edition
 	retval.Default_physical_edition = v.WorkInfo.DefaultEditions.Default_physical_edition
@@ -1524,6 +1532,11 @@ func (v *GetWorkBooks_by_pkBooks) GetRating() float64 { return v.WorkInfo.Rating
 // GetRatings_count returns GetWorkBooks_by_pkBooks.Ratings_count, and is useful for accessing the field via an interface.
 func (v *GetWorkBooks_by_pkBooks) GetRatings_count() int64 { return v.WorkInfo.Ratings_count }
 
+// GetBook_mappings returns GetWorkBooks_by_pkBooks.Book_mappings, and is useful for accessing the field via an interface.
+func (v *GetWorkBooks_by_pkBooks) GetBook_mappings() []WorkInfoBook_mappings {
+	return v.WorkInfo.Book_mappings
+}
+
 // GetContributions returns GetWorkBooks_by_pkBooks.Contributions, and is useful for accessing the field via an interface.
 func (v *GetWorkBooks_by_pkBooks) GetContributions() []DefaultEditionsContributions {
 	return v.WorkInfo.DefaultEditions.Contributions
@@ -1608,6 +1621,8 @@ type __premarshalGetWorkBooks_by_pkBooks struct {
 
 	Ratings_count int64 `json:"ratings_count"`
 
+	Book_mappings []WorkInfoBook_mappings `json:"book_mappings"`
+
 	Contributions []DefaultEditionsContributions `json:"contributions"`
 
 	Default_audio_edition DefaultEditionsDefault_audio_editionEditions `json:"default_audio_edition"`
@@ -1646,6 +1661,7 @@ func (v *GetWorkBooks_by_pkBooks) __premarshalJSON() (*__premarshalGetWorkBooks_
 	retval.Book_series = v.WorkInfo.Book_series
 	retval.Rating = v.WorkInfo.Rating
 	retval.Ratings_count = v.WorkInfo.Ratings_count
+	retval.Book_mappings = v.WorkInfo.Book_mappings
 	retval.Contributions = v.WorkInfo.DefaultEditions.Contributions
 	retval.Default_audio_edition = v.WorkInfo.DefaultEditions.Default_audio_edition
 	retval.Default_physical_edition = v.WorkInfo.DefaultEditions.Default_physical_edition
@@ -1887,9 +1903,11 @@ type WorkInfo struct {
 	State        string          `json:"state"`
 	Canonical_id int64           `json:"canonical_id"`
 	// An array relationship
-	Book_series     []WorkInfoBook_series `json:"book_series"`
-	Rating          float64               `json:"rating"`
-	Ratings_count   int64                 `json:"ratings_count"`
+	Book_series   []WorkInfoBook_series `json:"book_series"`
+	Rating        float64               `json:"rating"`
+	Ratings_count int64                 `json:"ratings_count"`
+	// An array relationship
+	Book_mappings   []WorkInfoBook_mappings `json:"book_mappings"`
 	DefaultEditions `json:"-"`
 }
 
@@ -1931,6 +1949,9 @@ func (v *WorkInfo) GetRating() float64 { return v.Rating }
 
 // GetRatings_count returns WorkInfo.Ratings_count, and is useful for accessing the field via an interface.
 func (v *WorkInfo) GetRatings_count() int64 { return v.Ratings_count }
+
+// GetBook_mappings returns WorkInfo.Book_mappings, and is useful for accessing the field via an interface.
+func (v *WorkInfo) GetBook_mappings() []WorkInfoBook_mappings { return v.Book_mappings }
 
 // GetContributions returns WorkInfo.Contributions, and is useful for accessing the field via an interface.
 func (v *WorkInfo) GetContributions() []DefaultEditionsContributions {
@@ -2012,6 +2033,8 @@ type __premarshalWorkInfo struct {
 
 	Ratings_count int64 `json:"ratings_count"`
 
+	Book_mappings []WorkInfoBook_mappings `json:"book_mappings"`
+
 	Contributions []DefaultEditionsContributions `json:"contributions"`
 
 	Default_audio_edition DefaultEditionsDefault_audio_editionEditions `json:"default_audio_edition"`
@@ -2049,6 +2072,7 @@ func (v *WorkInfo) __premarshalJSON() (*__premarshalWorkInfo, error) {
 	retval.Book_series = v.Book_series
 	retval.Rating = v.Rating
 	retval.Ratings_count = v.Ratings_count
+	retval.Book_mappings = v.Book_mappings
 	retval.Contributions = v.DefaultEditions.Contributions
 	retval.Default_audio_edition = v.DefaultEditions.Default_audio_edition
 	retval.Default_physical_edition = v.DefaultEditions.Default_physical_edition
@@ -2057,6 +2081,17 @@ func (v *WorkInfo) __premarshalJSON() (*__premarshalWorkInfo, error) {
 	retval.Fallback = v.DefaultEditions.Fallback
 	return &retval, nil
 }
+
+// WorkInfoBook_mappings includes the requested fields of the GraphQL type book_mappings.
+// The GraphQL type's documentation follows.
+//
+// columns and relationships of "book_mappings"
+type WorkInfoBook_mappings struct {
+	External_id string `json:"external_id"`
+}
+
+// GetExternal_id returns WorkInfoBook_mappings.External_id, and is useful for accessing the field via an interface.
+func (v *WorkInfoBook_mappings) GetExternal_id() string { return v.External_id }
 
 // WorkInfoBook_series includes the requested fields of the GraphQL type book_series.
 // The GraphQL type's documentation follows.
@@ -2368,6 +2403,9 @@ fragment WorkInfo on books {
 	}
 	rating
 	ratings_count
+	book_mappings(where: {platform:{name:{_eq:"Goodreads"}}}) {
+		external_id
+	}
 	... DefaultEditions
 }
 fragment DefaultEditions on books {
@@ -2561,6 +2599,9 @@ fragment WorkInfo on books {
 	}
 	rating
 	ratings_count
+	book_mappings(where: {platform:{name:{_eq:"Goodreads"}}}) {
+		external_id
+	}
 	... DefaultEditions
 }
 fragment EditionInfo on editions {
