@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/Faustvii/rreading-glasses/compare/v1.2.0...v1.3.0) (2026-11-21)
+
+
+### Features
+
+* **hardcover:** expose goodreads book ids mapped to a work ([#53](https://github.com/Faustvii/rreading-glasses/issues/53)) ([df3e0f3](https://github.com/Faustvii/rreading-glasses/commit/df3e0f3bc6572e951dffb455e1aed227cba4ffc9))
+
 ## [1.2.0](https://github.com/Faustvii/rreading-glasses/compare/v1.1.1...v1.2.0) (2026-11-16)
 
 
